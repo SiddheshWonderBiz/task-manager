@@ -1,0 +1,77 @@
+name: CD - Build & Push Docker Image
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'TaskManager.Api/**'
+      - 'Dockerfile'
+      - '.github/workflows/cd.yml'
+
+jobs:
+  # ── Job 1: Run tests first ──────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore & Test
+        run: |
+          dotnet restore TaskManager.Api.slnx
+          dotnet test TaskManager.Api.slnx --configuration Release --verbosity normal
+
+  # ── Job 2: Build Docker image & push ───────────────
+  docker:
+    needs: test           # only runs if tests pass
+    runs-on: ubuntu-latest
+
+    # Permissions needed to push to GitHub Container Registry
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Log in to GitHub Container Registry (ghcr.io)
+      # Uses GITHUB_TOKEN — no secrets needed, it's automatic!
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Generate image tags and labels automatically
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/task-manager
+          tags: |
+            type=sha,prefix=sha-          # e.g. sha-a1b2c3d
+            type=raw,value=latest         # always tag latest on master
+            type=raw,value=build-${{ github.run_number }}  # e.g. build-42
+
+      # Build the image and push to ghcr.io
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: TaskManager.Api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Print the image URL so you can see it in the logs
+      - name: Print image URL
+        run: |
+          echo "Image pushed successfully!"
+          echo "Pull with: docker pull ghcr.io/${{ github.repository }}/task-manager:latest"
